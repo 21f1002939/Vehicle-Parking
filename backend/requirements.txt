@@ -1,0 +1,28 @@
+# Core Flask Framework
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Flask Extensions
+Flask-SQLAlchemy==3.1.1
+Flask-CORS==4.0.0
+Flask-Login==0.6.3
+Flask-Caching==2.3.1
+
+# Database
+SQLAlchemy==2.0.23
+
+# Task Queue & Background Jobs
+celery==5.3.4
+redis==5.0.1
+
+# Environment & Configuration
+python-dotenv==1.0.0
+
+# Security & Authentication
+# (Werkzeug includes password hashing utilities)
+
+# Email Support (for Celery tasks)
+# Note: smtplib, email.mime are part of Python standard library
+
+# Data Processing
+# Note: csv, io are part of Python standard library
