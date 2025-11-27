@@ -1,6 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
-from datetime import datetime
+from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
@@ -75,11 +75,11 @@ class ParkingSpot(db.Model):
     
     def mark_occupied(self):
         self.status = 'O'
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def mark_available(self):
         self.status = 'A'
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def __repr__(self):
         return f'<ParkingSpot {self.spot_number} - Status: {self.status}>'
@@ -106,17 +106,17 @@ class Reservation(db.Model):
         return self.parking_cost
     
     def complete_reservation(self):
-        self.leaving_timestamp = datetime.utcnow()
+        self.leaving_timestamp = datetime.now(timezone.utc)
         self.status = 'completed'
         self.calculate_cost()
         self.parking_spot.mark_available()
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
     
     def get_duration_hours(self):
         if self.leaving_timestamp:
             return round((self.leaving_timestamp - self.parking_timestamp).total_seconds() / 3600, 2)
         else:
-            return round((datetime.utcnow() - self.parking_timestamp).total_seconds() / 3600, 2)
+            return round((datetime.now(timezone.utc) - self.parking_timestamp).total_seconds() / 3600, 2)
     
     def __repr__(self):
         return f'<Reservation User:{self.user_id} Spot:{self.spot_id} Status:{self.status}>'
@@ -130,14 +130,12 @@ def create_admin_user():
             is_admin=True,
             phone_number='0000000000'
         )
-        admin.set_password('admin123')  # Default password - should be changed
+        admin.set_password('admin123') 
         db.session.add(admin)
         db.session.commit()
-        print("Admin user created successfully!")
     return admin
 
 def init_db(app):
     with app.app_context():
         db.create_all()
         create_admin_user()
-        print("Database initialized successfully!")

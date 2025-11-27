@@ -95,13 +95,13 @@ redis-server
 **Terminal 1 - Celery Worker:**
 ```bash
 cd backend
-celery -A app.celery worker --loglevel=info --pool=solo
+python run_worker.py
 ```
 
 **Terminal 2 - Celery Beat Scheduler:**
 ```bash
 cd backend
-celery -A app.celery beat --loglevel=info
+python run_beat.py
 ```
 
 ## Default Admin Credentials
@@ -196,10 +196,10 @@ Vehicles_parking/
 
 ### Full Setup (With Background Jobs)
 1. Start Redis
-2. Start Backend
-3. Start Frontend
-4. Start Celery Worker: `cd backend && celery -A app.celery worker --loglevel=info --pool=solo`
-5. Start Celery Beat: `cd backend && celery -A app.celery beat --loglevel=info`
+2. Start Backend: `cd backend && python app.py`
+3. Start Frontend: `cd frontend && npm run dev`
+4. Start Celery Worker: `cd backend && python run_worker.py`
+5. Start Celery Beat: `cd backend && python run_beat.py`
 
 ## Usage
 

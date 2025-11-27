@@ -1,15 +1,25 @@
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 from flask_login import LoginManager, current_user
+from flask_caching import Cache
 from models import db, User, ParkingLot, ParkingSpot, Reservation
 from datetime import datetime, timedelta
 import os
 
 app = Flask(__name__)
 
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production-make-it-random-and-secure'
+app.config['SECRET_KEY'] = 'my-secret-key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///parking_app.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Redis & Celery Configuration
+app.config['broker_url'] = 'redis://localhost:6379/0'
+app.config['result_backend'] = 'redis://localhost:6379/0'
+
+# Flask-Caching Configuration
+app.config['CACHE_TYPE'] = 'RedisCache'
+app.config['CACHE_REDIS_URL'] = 'redis://localhost:6379/1'
+app.config['CACHE_DEFAULT_TIMEOUT'] = 60
 
 app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -18,16 +28,25 @@ app.config['SESSION_COOKIE_NAME'] = 'parking_session'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
 
-# Enable CORS for VueJS frontend with credentials support
+# Check if Redis is available
+REDIS_AVAILABLE = False
+try:
+    import redis
+    r = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=1)
+    r.ping()
+    REDIS_AVAILABLE = True
+    print("[OK] Redis connection successful!")
+except Exception as e:
+    print(f"[WARNING] Redis not available: {e}")
+    print("   Running without Redis caching and Celery")
+    print("   To enable: Install Redis and restart the application")
+    # Fallback to simple cache
+    app.config['CACHE_TYPE'] = 'SimpleCache'
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 60
+
+# Enable CORS for all origins
 CORS(app, 
-     origins=[
-         "http://localhost:5173", 
-         "http://127.0.0.1:5173",
-         "http://localhost:5174", 
-         "http://127.0.0.1:5174",
-         "http://localhost:8080", 
-         "http://127.0.0.1:8080"
-     ],
+     resources={r"/*": {"origins": "*"}},
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "Accept"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -35,6 +54,18 @@ CORS(app,
 )
 
 db.init_app(app)
+
+# Initialize Flask-Caching
+cache = Cache(app)
+
+# Initialize Celery only if Redis is available
+celery = None
+if REDIS_AVAILABLE:
+    try:
+        from celery_config import make_celery
+        celery = make_celery(app)
+    except Exception as e:
+        pass
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -53,12 +84,7 @@ def unauthorized():
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
-    allowed_origins = [
-        'http://localhost:5173', 'http://127.0.0.1:5173',
-        'http://localhost:5174', 'http://127.0.0.1:5174',
-        'http://localhost:8080', 'http://127.0.0.1:8080'
-    ]
-    if origin in allowed_origins:
+    if origin:
         response.headers.add('Access-Control-Allow-Origin', origin)
         response.headers.add('Access-Control-Allow-Credentials', 'true')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
@@ -67,7 +93,10 @@ def after_request(response):
 
 # Import and register blueprints
 from auth import auth_bp
-from controllers import admin_bp, user_bp
+from controllers import admin_bp, user_bp, init_cache
+
+# Initialize cache in controllers
+init_cache(cache)
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)

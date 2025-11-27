@@ -18,11 +18,4 @@ redis==5.0.1
 # Environment & Configuration
 python-dotenv==1.0.0
 
-# Security & Authentication
-# (Werkzeug includes password hashing utilities)
 
-# Email Support (for Celery tasks)
-# Note: smtplib, email.mime are part of Python standard library
-
-# Data Processing
-# Note: csv, io are part of Python standard library

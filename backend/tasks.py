@@ -1,6 +1,6 @@
-from celery import shared_task
+from app import celery, app
 from models import db, User, ParkingLot, Reservation
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import csv
 import io
@@ -10,14 +10,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 
-@shared_task
+@celery.task
 def send_daily_reminder():
     """
     Daily reminder job - Check users who haven't booked and send notification
     Runs every day at 6 PM
     """
     try:
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         users = User.query.filter_by(is_admin=False, is_active=True).all()
         
         inactive_users = []
@@ -32,16 +32,14 @@ def send_daily_reminder():
         if inactive_users:
             for user in inactive_users:
                 send_reminder_notification(user)
-                print(f"Reminder sent to {user.username}")
         
         return f"Daily reminders sent to {len(inactive_users)} users"
     
     except Exception as e:
-        print(f"Error in daily reminder: {str(e)}")
         return f"Error: {str(e)}"
 
 
-@shared_task
+@celery.task
 def generate_monthly_report():
     """
     Monthly activity report - Generate and send report to all users
@@ -67,38 +65,45 @@ def generate_monthly_report():
                 report_html = generate_report_html(user, reservations, last_month)
                 send_email_report(user, report_html, last_month)
                 reports_sent += 1
-                print(f"Monthly report sent to {user.username}")
         
         return f"Monthly reports sent to {reports_sent} users"
     
     except Exception as e:
-        print(f"Error in monthly report: {str(e)}")
         return f"Error: {str(e)}"
 
 
-@shared_task
+@celery.task
 def export_user_parking_history(user_id):
     """
     Export user parking history to CSV - User triggered async job
+    Sends email with CSV attachment using MailHog
     """
     try:
-        user = User.query.get(user_id)
-        if not user:
-            return "User not found"
-        
-        reservations = Reservation.query.filter_by(user_id=user_id).order_by(
-            Reservation.created_at.desc()
-        ).all()
-        
-        csv_content = generate_csv_export(reservations)
-        
-        send_csv_notification(user, csv_content)
-        
-        return f"CSV export completed for {user.username}"
+        with app.app_context():
+            user = User.query.get(user_id)
+            if not user:
+                return {"status": "error", "message": "User not found"}
+            
+            reservations = Reservation.query.filter_by(user_id=user_id).order_by(
+                Reservation.created_at.desc()
+            ).all()
+            
+            if not reservations:
+                return {"status": "error", "message": "No parking history found"}
+            
+            csv_content = generate_csv_export(reservations)
+            
+            # Send email with CSV attachment
+            send_csv_notification(user, csv_content)
+            
+            return {
+                "status": "success",
+                "message": f"CSV export completed for {user.username}",
+                "records_exported": len(reservations)
+            }
     
     except Exception as e:
-        print(f"Error in CSV export: {str(e)}")
-        return f"Error: {str(e)}"
+        return {"status": "error", "message": f"Export failed: {str(e)}"}
 
 
 def send_reminder_notification(user):
@@ -252,14 +257,14 @@ def generate_csv_export(reservations):
 
 def send_email(to_email, subject, body, html_body=None, attachment=None):
     """
-    Send email using SMTP
-    Configure your email settings here
+    Send email using MailHog SMTP for local testing
+    MailHog runs on localhost:1025 and provides a web UI at localhost:8025
     """
     try:
-        SMTP_SERVER = 'smtp.gmail.com'
-        SMTP_PORT = 587
-        SENDER_EMAIL = 'your-email@gmail.com'
-        SENDER_PASSWORD = 'your-app-password'
+        # MailHog SMTP Configuration
+        SMTP_SERVER = 'localhost'
+        SMTP_PORT = 1025
+        SENDER_EMAIL = 'parking-system@localhost'
         
         msg = MIMEMultipart('alternative')
         msg['From'] = SENDER_EMAIL
@@ -281,15 +286,15 @@ def send_email(to_email, subject, body, html_body=None, attachment=None):
             part.add_header('Content-Disposition', 'attachment; filename=parking_history.csv')
             msg.attach(part)
         
-        print(f"[Email Simulation] To: {to_email}, Subject: {subject}")
+        # Connect to MailHog SMTP (no authentication needed)
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.send_message(msg)
         
         return True
-    
+        
     except Exception as e:
-        print(f"Error sending email: {str(e)}")
+        print(f"Email sending failed: {e}")
         return False
-
-
 def send_email_report(user, html_content, month):
     """
     Send monthly report via email

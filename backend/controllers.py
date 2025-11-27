@@ -2,10 +2,43 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from models import db, User, ParkingLot, ParkingSpot, Reservation
 from auth import admin_required, user_required
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import func
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
+
+# Import cache from app (will be set after app initialization)
+cache = None
+
+def init_cache(cache_instance):
+    global cache
+    cache = cache_instance
+
+# Helper function to use cache safely
+def safe_cache_get(key, default=None):
+    """Safely get from cache, return default if cache not available"""
+    try:
+        if cache:
+            return cache.get(key)
+    except:
+        pass
+    return default
+
+def safe_cache_set(key, value, timeout=60):
+    """Safely set cache, ignore if cache not available"""
+    try:
+        if cache:
+            cache.set(key, value, timeout=timeout)
+    except:
+        pass
+
+def safe_cache_delete(key):
+    """Safely delete from cache, ignore if cache not available"""
+    try:
+        if cache:
+            cache.delete(key)
+    except:
+        pass
 
 @admin_bp.route('/dashboard', methods=['GET'])
 @admin_required
@@ -261,7 +294,7 @@ def update_parking_lot(lot_id):
         if 'description' in data:
             lot.description = data['description']
         
-        lot.updated_at = datetime.utcnow()
+        lot.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         
         return jsonify({
@@ -688,39 +721,50 @@ def get_user_charts():
 @login_required
 def export_parking_history():
     try:
-        import csv
-        from io import StringIO
+        from tasks import export_user_parking_history
         
-        reservations = Reservation.query.filter_by(user_id=current_user.id).order_by(
-            Reservation.created_at.desc()
-        ).all()
-        
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['Date', 'Parking Lot', 'Spot', 'Vehicle', 'Status', 'Duration (hrs)', 'Cost'])
-        
-        for res in reservations:
-            writer.writerow([
-                res.parking_timestamp.strftime('%Y-%m-%d %H:%M'),
-                res.parking_spot.parking_lot.prime_location_name,
-                res.parking_spot.spot_number,
-                res.vehicle_number,
-                res.status,
-                res.get_duration_hours() if res.status == 'completed' else 'Active',
-                f'₹{res.parking_cost}' if res.parking_cost else 'N/A'
-            ])
-        
-        csv_content = output.getvalue()
-        output.close()
+        # Trigger async Celery task
+        task = export_user_parking_history.delay(current_user.id)
         
         return jsonify({
             'status': 'success',
-            'message': 'Export completed',
-            'csv_data': csv_content
+            'message': 'Export request submitted. You will receive an email with your parking history CSV file shortly.',
+            'task_id': task.id
         }), 200
         
     except Exception as e:
         return jsonify({
             'status': 'error',
-            'message': f'Failed to export: {str(e)}'
+            'message': f'Failed to submit export request: {str(e)}'
+        }), 500
+
+
+@user_bp.route('/export-status/<task_id>', methods=['GET'])
+@login_required
+def check_export_status(task_id):
+    """Check the status of CSV export task"""
+    try:
+        from celery.result import AsyncResult
+        from app import celery
+        
+        task_result = AsyncResult(task_id, app=celery)
+        
+        response = {
+            'task_id': task_id,
+            'state': task_result.state,
+            'ready': task_result.ready(),
+        }
+        
+        if task_result.ready():
+            if task_result.successful():
+                response['result'] = task_result.result
+            else:
+                response['error'] = str(task_result.info)
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to check status: {str(e)}'
         }), 500
